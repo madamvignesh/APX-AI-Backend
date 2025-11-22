@@ -21,7 +21,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
 # n8n fallback
-N8N_WEBHOOK_URL = "https://team-apx.app.n8n.cloud/webhook/33ufnHMgyOogu0dJFw9E3jiOfu1_6oeV1asyVaGkY8pXu2Y55"
+
 
 # FastAPI app
 app = FastAPI()
@@ -96,17 +96,7 @@ async def chat_endpoint(msg: ChatMessage):
     except Exception as e:
         logging.error(f"Chat error: {e}")
 
-        # Fallback: send to n8n webhook
-        try:
-            async with httpx.AsyncClient() as client_http:
-                res = await client_http.post(
-                    N8N_WEBHOOK_URL, json={"message": msg.message}, timeout=10.0
-                )
-                ai_text = res.json().get("response", "Please call emergency services immediately.")
-            return ChatResponse(response=ai_text, conversation_id=conversation_id)
-        except Exception as e2:
-            logging.error(f"n8n fallback failed: {e2}")
-            raise HTTPException(status_code=500, detail="AI service unavailable.")
+        raise HTTPException(status_code=500, detail="AI service unavailable.")
 
 # Contact endpoint
 @api_router.post("/contact")
@@ -133,7 +123,7 @@ async def root():
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_origin_regex="https://.*\.vercel\.app",
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
