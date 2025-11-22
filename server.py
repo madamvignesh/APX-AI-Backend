@@ -13,7 +13,12 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 # MongoDB
-client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+# MongoDB
+MONGO_URL = os.environ.get("MONGO_URL", "")
+if not MONGO_URL:
+    logging.warning("MONGO_URL not set! Defaulting to localhost (will fail in production).")
+
+client = AsyncIOMotorClient(MONGO_URL)
 db = client[os.environ["DB_NAME"]]
 
 # Gemini
@@ -115,12 +120,11 @@ async def contact(form: ContactForm):
         raise HTTPException(status_code=500, detail="Failed to submit contact form.")
 
 # Root
-# Root
 @app.get("/")
 async def root_index():
     return {"message": "APX AI Backend is running", "docs": "/docs"}
 
-@api_router.get("/api")
+@api_router.get("/")
 async def root():
     return {"message": "APX AI - Emergency Assistant API", "status": "active"}
 
@@ -141,6 +145,11 @@ app.include_router(api_router)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Shutdown Mongo
+@app.on_event("startup")
+async def startup_event():
+    masked_url = MONGO_URL.split("@")[-1] if "@" in MONGO_URL else "localhost/local"
+    logging.info(f"Connecting to MongoDB at: ...@{masked_url}")
+
 @app.on_event("shutdown")
 async def shutdown_db():
     client.close()
