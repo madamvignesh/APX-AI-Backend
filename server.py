@@ -115,6 +115,11 @@ async def contact(form: ContactForm):
         raise HTTPException(status_code=500, detail="Failed to submit contact form.")
 
 # Root
+# Root
+@app.get("/")
+async def root_index():
+    return {"message": "APX AI Backend is running", "docs": "/docs"}
+
 @api_router.get("/api")
 async def root():
     return {"message": "APX AI - Emergency Assistant API", "status": "active"}
