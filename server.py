@@ -126,7 +126,12 @@ async def root_index():
 
 @api_router.get("/")
 async def root():
-    return {"message": "APX AI - Emergency Assistant API", "status": "active"}
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content("Reply exactly with: 'APX AI System is fully operational.'")
+        return {"message": response.text.strip(), "status": "active", "gemini_check": "success"}
+    except Exception as e:
+        return {"message": f"Gemini Check Failed: {str(e)}", "status": "error", "gemini_check": "failed"}
 
 # CORS middleware
 app.add_middleware(
