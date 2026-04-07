@@ -1,12 +1,19 @@
 from fastapi import FastAPI, APIRouter, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from motor.motor_asyncio import AsyncIOMotorClient
 import google.generativeai as genai
 import os, uuid, logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+
+from dotenv import load_dotenv
+load_dotenv()
+
+# genai.configure(api_key="AIzaSyDTJoCV-7sD8rEs43CUjbMz6J0pu3CAxxo")
+
+# for m in genai.list_models():
+#     print(m.name, m.supported_generation_methods)
 # -----------------------------
 # Helper: read env or Render secret file
 # -----------------------------
@@ -30,13 +37,8 @@ def get_secret(key: str) -> str | None:
 # -----------------------------
 
 # Note: On Render, do NOT rely on a local .env file. Use Render environment variables or secret files.
-MONGO_URL = get_secret("MONGO_URL") or ""
-DB_NAME = get_secret("DB_NAME") or os.environ.get("DB_NAME") or "apx_db"
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
-
-if not MONGO_URL:
-    logging.warning("MONGO_URL not set — defaulting to localhost (won't work in production).")
 
 if not GEMINI_API_KEY:
     logging.warning("GEMINI_API_KEY not set — Gemini calls will fail until you provide the key.")
@@ -47,17 +49,6 @@ if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
     except Exception:
         logging.exception("Failed to configure Google Generative AI client")
-
-# -----------------------------
-# MongoDB client
-# -----------------------------
-try:
-    client = AsyncIOMotorClient(MONGO_URL) if MONGO_URL else AsyncIOMotorClient()
-    db = client[DB_NAME]
-except Exception:
-    logging.exception("Failed to initialize MongoDB client; continuing without DB access")
-    client = None
-    db = None
 
 # -----------------------------
 # FastAPI app + router
@@ -86,69 +77,28 @@ class ContactForm(BaseModel):
 # -----------------------------
 @api_router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(msg: ChatMessage):
-    conversation_id = msg.conversation_id or str(uuid.uuid4())
-
     system_prompt = (
-        "You are APX AI, a Pre-Ambulance Assistant trained to provide immediate,\n"
-        "life-saving first aid guidance during medical emergencies.\n"
-        "Your role: Provide CLEAR, STEP-BY-STEP emergency instructions, stay CALM, \n"
-        "ask critical questions, guide through procedures, and remind to call emergency services."
+        "You are an emergency assistant. Give clear, step-by-step help. The user is in an emergency situation. Do not respond with anything else. Respond in 4 lines"
     )
 
     try:
-        # pull last 5 messages (if DB available)
-        past_messages = []
-        if db is not None:
-            history_cursor = db.conversations.find({"conversation_id": conversation_id}).sort("timestamp", -1).limit(5)
-            past_messages = await history_cursor.to_list(length=5)
-            past_messages.reverse()
+        model = genai.GenerativeModel("gemini-flash-latest")
 
-        # Build conversation history text
-        conversation_context = [system_prompt]
-        for h in past_messages:
-            conversation_context.append(f"User: {h.get('user_message','')}")
-            conversation_context.append(f"APX AI: {h.get('ai_response','')}")
+        response = model.generate_content([
+            system_prompt,
+            f"User: {msg.message}"
+        ])
 
-        conversation_context.append(f"User: {msg.message}")
+        ai_text = response.text.strip() if hasattr(response, "text") else "Help is on the way."
 
-        # Use a supported model name
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
-
-        # generate_content accepts text or list/context depending on SDK; keep as provided list
-        resp = model.generate_content(conversation_context)
-
-        # The SDK may return different shapes; try common access patterns
-        ai_text = None
-        if hasattr(resp, "text") and resp.text:
-            ai_text = resp.text.strip()
-        else:
-            # try content in candidate responses
-            try:
-                # Some SDKs return .candidates[0].content or .candidates[0].output
-                candidates = getattr(resp, "candidates", None)
-                if candidates and len(candidates) > 0:
-                    first = candidates[0]
-                    ai_text = first.get("content") or first.get("output") or str(first)
-            except Exception:
-                ai_text = None
-
-        if not ai_text:
-            ai_text = "Please describe the emergency."
-
-        # Store conversation (if DB available)
-        if db is not None:
-            await db.conversations.insert_one({
-                "conversation_id": conversation_id,
-                "user_message": msg.message,
-                "ai_response": ai_text,
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            })
-
-        return ChatResponse(response=ai_text, conversation_id=conversation_id)
+        return {
+            "response": ai_text,
+            "conversation_id": msg.conversation_id or str(uuid.uuid4())
+        }
 
     except Exception as e:
-        logging.exception(f"Chat error: {e}")
-        raise HTTPException(status_code=500, detail="AI service unavailable.")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 # -----------------------------
 # Contact endpoint
@@ -156,17 +106,6 @@ async def chat_endpoint(msg: ChatMessage):
 @api_router.post("/contact")
 async def contact(form: ContactForm):
     try:
-        if db is None:
-            logging.warning("Contact form submitted but DB is not available; request will not be persisted.")
-            return {"success": True, "message": "Thank you! We'll get back to you soon (note: DB unavailable)."}
-
-        await db.contact_queries.insert_one({
-            "id": str(uuid.uuid4()),
-            "name": form.name,
-            "email": form.email,
-            "message": form.message,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
         return {"success": True, "message": "Thank you! We'll get back to you soon."}
     except Exception as e:
         logging.exception(f"Contact form error: {e}")
@@ -186,7 +125,7 @@ async def root():
         return {"message": "Gemini Check Failed: GEMINI_API_KEY not set.", "status": "error", "gemini_check": "failed"}
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        model = genai.GenerativeModel("gemini-flash-latest")
         response = model.generate_content("Reply exactly with: 'APX AI System is fully operational.'")
         text = getattr(response, "text", None) or (response.candidates[0].get("content") if getattr(response, "candidates", None) else None)
         return {"message": (text or "No text returned").strip(), "status": "active", "gemini_check": "success"}
@@ -211,17 +150,3 @@ app.include_router(api_router)
 
 # Logging config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-# Startup / Shutdown
-@app.on_event("startup")
-async def startup_event():
-    masked = MONGO_URL.split("@")[-1] if MONGO_URL and "@" in MONGO_URL else ("localhost/local" if MONGO_URL else "not-set")
-    logging.info(f"Connecting to MongoDB at: ...@{masked}")
-
-@app.on_event("shutdown")
-async def shutdown_db():
-    try:
-        if client:
-            client.close()
-    except Exception:
-        logging.exception("Error closing MongoDB client")
