@@ -10,10 +10,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-# genai.configure(api_key="AIzaSyDTJoCV-7sD8rEs43CUjbMz6J0pu3CAxxo")
+genai.configure(api_key=get_secret("GEMINI_API_KEY"))
 
-# for m in genai.list_models():
-#     print(m.name, m.supported_generation_methods)
+for m in genai.list_models():
+    print(m.name, m.supported_generation_methods)
+
 # -----------------------------
 # Helper: read env or Render secret file
 # -----------------------------
